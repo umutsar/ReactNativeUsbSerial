@@ -17,7 +17,27 @@ const SerialPortComponent = () => {
     const [dataLength, setDataLength] = useState(0);
     const [firstByte, setFirstByte] = useState(0);
     const [type, setType] = useState('');
+    const [devices, setDevices] = useState([]);
 
+
+    // 1 saniye aralıklarla cihazı tarayan fonksiyon
+    function startUSBMonitoring() {
+        const intervalId = setInterval(async () => {
+            try {
+                const devices = await UsbSerialManager.list();
+                if (devices.length > 0) {
+                    clearInterval(intervalId); // Cihaz bulundu, taramayı durdur
+                    await requestUSBPermission(devices[0]);
+                } else {
+                    console.log('No USB devices found, retrying...');
+                }
+            } catch (err) {
+                console.error('Error scanning for devices:', err);
+            }
+        }, 1000); // 1 saniyelik tarama aralığı
+    }
+
+    // USB izni isteme ve bağlantı başlatma
     async function requestUSBPermission() {
         try {
             const grantedStorage = await PermissionsAndroid.request(
@@ -30,20 +50,20 @@ const SerialPortComponent = () => {
                     buttonPositive: "OK"
                 }
             );
-
+    
             if (grantedStorage !== PermissionsAndroid.RESULTS.GRANTED) {
                 Alert.alert('Storage permission denied');
                 return;
             }
-
+    
             const devices = await UsbSerialManager.list();
             if (devices.length > 0) {
                 const grantedUSB = await UsbSerialManager.tryRequestPermission(devices[0].deviceId);
-
+    
                 if (grantedUSB) {
                     Alert.alert('USB permission granted');
                     const port = await UsbSerialManager.open(devices[0].deviceId, {
-                        baudRate: 9600,
+                        baudRate: 115200,
                         parity: 0,
                         dataBits: 8,
                         stopBits: 1,
@@ -60,15 +80,16 @@ const SerialPortComponent = () => {
             Alert.alert('Error', 'Permission request failed');
         }
     }
+    
 
+    // useEffect içindeki tarama ve bağlantı mantığı
     useEffect(() => {
         let subscription;
+
         if (usbSerialPort) {
             subscription = usbSerialPort.onReceived((event) => {
                 const data = event.data;
-
                 const modifiedData = data.split("FF").filter(part => part.length > 0).map(part => parseInt(part, 16));
-
 
                 let dataDecimalArray = [];
 
@@ -82,36 +103,31 @@ const SerialPortComponent = () => {
                     case 2:
                         setSumVoltage(modifiedData[1]);
                         break;
-
                     case 3:
                         setSoc(modifiedData[1]);
                         break;
-
                     case 4:
                         setDistanceCovered((modifiedData[1] << 8) | modifiedData[2]);
                         break;
-
                     case 5:
                         setDistanceCoveredPrevious((modifiedData[1] << 8) | modifiedData[2]);
                         break;
-
                     case 6:
                         setRange((modifiedData[1] << 8) | modifiedData[2]);
                         break;
-
                     case 7:
                         setFaults([modifiedData[1], modifiedData[2], modifiedData[3], modifiedData[4], modifiedData[5]]);
                         break;
-
                     case 8:
                         setChargeStatus(modifiedData[1]);
                         break;
-
                     default:
                         break;
                 }
+
                 setFirstByte(modifiedData[0]);
                 setDataLength(modifiedData.length);
+
                 for (let i = 0; i < modifiedData.length; i++) {
                     const byte = modifiedData[i];
                     const decimalValue = parseInt(byte);
@@ -121,16 +137,23 @@ const SerialPortComponent = () => {
                 setReceivedData(modifiedData.join(","));
             });
 
-
+            // Bağlantı koptuğunda tekrar taramayı başlat
             return () => {
-                console.log("RETURN ICINE GIRDI")
                 if (subscription) {
                     subscription.remove();
                 }
-                usbSerialPort.close();
+                if (usbSerialPort) {
+                    usbSerialPort.close(); // Portu kapat
+                    setUsbSerialPort(null); // Portu null yap
+                    startUSBMonitoring(); // Tekrar tarama başlat
+                }
             };
+        } else {
+            startUSBMonitoring(); // Eğer port bağlı değilse taramayı başlat
         }
+
     }, [usbSerialPort]);
+
 
     return (
         <ScrollView style={styles.container}>
@@ -139,15 +162,15 @@ const SerialPortComponent = () => {
             </View>
 
             <View style={styles.dataContainer}>
-                {/* <Text style={styles.title}>Alınan Veri</Text> */}
+                <Text style={styles.title}>Alınan Veri</Text> 
                 <Text style={styles.data}>{receivedData}</Text>
                 <Text style={styles.dataInfo}>Veri Genişliği: {dataLength}</Text>
                 <Text style={styles.dataInfo}>İlk Bayt: {firstByte}</Text>
             </View>
 
-            <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Hız</Text>
-                <Text style={styles.data}>{speed}</Text>
+            <View style={styles.speedSection}>
+                <Text style={styles.sectionTitleSpeed}>Hız</Text>
+                <Text style={styles.speedData}>{speed}</Text>
             </View>
 
             <View style={styles.section}>
@@ -234,11 +257,39 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 4,
     },
+
+    speedSection: {
+        marginBottom: 16,
+        padding: 12,
+        backgroundColor: '#ffffff',
+        borderRadius: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+        elevation: 4,
+        alignItems: 'center'
+    },
+
+
     sectionTitle: {
         fontSize: 16,
         fontWeight: 'bold',
         color: '#007BFF',
         marginBottom: 8,
+    },
+
+    sectionTitleSpeed: {
+        fontSize: 32,
+        fontWeight: 'bold',
+        color: '#007BFF',
+    },
+
+    speedData: {
+        fontSize: 84,
+        fontWeight: 'bold',
+        color: '#333',
+
     },
 });
 
